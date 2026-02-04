@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// ─── LOGIN ───────────────────────────────────────────────────────────────────
+// ─── LOGIN WITH CHOICE ───────────────────────────────────────────────────────
 
 func handleLogin() {
 	if isLoggedIn() {
@@ -26,7 +26,103 @@ func handleLogin() {
 		return
 	}
 
-	logInfo("Opening browser for authentication...")
+	printDivider()
+	fmt.Println("Choose login method:")
+	fmt.Println()
+	fmt.Println("  1. Email & Password")
+	fmt.Println("  2. Gmail (OAuth)")
+	fmt.Println()
+	choice := prompt("Enter choice (1 or 2)")
+
+	switch strings.TrimSpace(choice) {
+	case "1":
+		handleEmailPasswordLogin()
+	case "2":
+		handleGmailLogin()
+	default:
+		logError("Invalid choice. Please enter 1 or 2")
+	}
+}
+
+// ─── EMAIL & PASSWORD LOGIN ──────────────────────────────────────────────────
+
+func handleEmailPasswordLogin() {
+	printDivider()
+	logInfo("Login with Email & Password")
+	fmt.Println()
+
+	email := prompt("Email")
+	password := promptPassword("Password")
+
+	if email == "" || password == "" {
+		logError("Email and password cannot be empty")
+		return
+	}
+
+	logInfo("Authenticating...")
+
+	// Generate PC hash
+	pcHash, err := generatePCHash()
+	if err != nil {
+		logError(fmt.Sprintf("Failed to generate PC identity: %v", err))
+		return
+	}
+
+	// Call auth endpoint
+	payload := map[string]string{
+		"email":    email,
+		"password": password,
+		"pc_hash":  pcHash,
+		"method":   "email",
+	}
+
+	jsonData, _ := json.Marshal(payload)
+	resp, err := http.Post(
+		EndpointAuth+"/login",
+		"application/json",
+		bytes.NewBuffer(jsonData),
+	)
+	if err != nil {
+		logError(fmt.Sprintf("Network error: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 {
+		logError("Invalid email or password")
+		return
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		logError(fmt.Sprintf("Login failed: %s", string(body)))
+		return
+	}
+
+	var authData AuthData
+	if err := json.NewDecoder(resp.Body).Decode(&authData); err != nil {
+		logError(fmt.Sprintf("Invalid response from server: %v", err))
+		return
+	}
+
+	authData.PCHash = pcHash
+	if err := writeAuth(&authData); err != nil {
+		logError(fmt.Sprintf("Failed to save auth: %v", err))
+		return
+	}
+
+	logSuccess("Logged in successfully")
+	printDivider()
+	logInfo(fmt.Sprintf("Account: %s", authData.Email))
+	logInfo(fmt.Sprintf("Plan:    %s", authData.Plan))
+	logInfo(fmt.Sprintf("PC ID:   %s", pcHash[:8]+"..."))
+	printDivider()
+}
+
+// ─── GMAIL OAUTH LOGIN ───────────────────────────────────────────────────────
+
+func handleGmailLogin() {
+	logInfo("Opening browser for Gmail authentication...")
 
 	// Generate PC hash
 	pcHash, err := generatePCHash()
@@ -107,7 +203,7 @@ func handleLogin() {
 
 	// Build OAuth URL - points to your Supabase function
 	callbackURL := fmt.Sprintf("http://localhost:%s%s", CallbackPort, CallbackPath)
-	authURL := fmt.Sprintf("%s?redirect=%s", EndpointAuth, callbackURL)
+	authURL := fmt.Sprintf("%s?redirect=%s&provider=google", EndpointAuth, callbackURL)
 
 	// Open browser
 	openBrowser(authURL)
@@ -142,6 +238,7 @@ func handleLogin() {
 	payload := map[string]string{
 		"code":    authCode,
 		"pc_hash": pcHash,
+		"method":  "oauth",
 	}
 
 	jsonData, _ := json.Marshal(payload)
@@ -179,6 +276,97 @@ func handleLogin() {
 	logInfo(fmt.Sprintf("Account: %s", authData.Email))
 	logInfo(fmt.Sprintf("Plan:    %s", authData.Plan))
 	logInfo(fmt.Sprintf("PC ID:   %s", pcHash[:8]+"..."))
+	printDivider()
+}
+
+// ─── SIGNUP ──────────────────────────────────────────────────────────────────
+
+func handleSignup() {
+	if isLoggedIn() {
+		auth, _ := readAuth()
+		logWarning(fmt.Sprintf("Already logged in as %s", auth.Email))
+		return
+	}
+
+	printDivider()
+	logInfo("Create new account")
+	fmt.Println()
+
+	email := prompt("Email")
+	password := promptPassword("Password")
+	confirmPassword := promptPassword("Confirm Password")
+
+	if email == "" || password == "" {
+		logError("Email and password cannot be empty")
+		return
+	}
+
+	if password != confirmPassword {
+		logError("Passwords do not match")
+		return
+	}
+
+	if len(password) < 6 {
+		logError("Password must be at least 6 characters")
+		return
+	}
+
+	logInfo("Creating account...")
+
+	// Generate PC hash
+	pcHash, err := generatePCHash()
+	if err != nil {
+		logError(fmt.Sprintf("Failed to generate PC identity: %v", err))
+		return
+	}
+
+	// Call signup endpoint
+	payload := map[string]string{
+		"email":    email,
+		"password": password,
+		"pc_hash":  pcHash,
+	}
+
+	jsonData, _ := json.Marshal(payload)
+	resp, err := http.Post(
+		EndpointAuth+"/signup",
+		"application/json",
+		bytes.NewBuffer(jsonData),
+	)
+	if err != nil {
+		logError(fmt.Sprintf("Network error: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 409 {
+		logError("Email already exists. Try logging in instead.")
+		return
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		logError(fmt.Sprintf("Signup failed: %s", string(body)))
+		return
+	}
+
+	var authData AuthData
+	if err := json.NewDecoder(resp.Body).Decode(&authData); err != nil {
+		logError(fmt.Sprintf("Invalid response from server: %v", err))
+		return
+	}
+
+	authData.PCHash = pcHash
+	if err := writeAuth(&authData); err != nil {
+		logError(fmt.Sprintf("Failed to save auth: %v", err))
+		return
+	}
+
+	logSuccess("Account created successfully!")
+	printDivider()
+	logInfo(fmt.Sprintf("Account: %s", authData.Email))
+	logInfo(fmt.Sprintf("Plan:    %s", authData.Plan))
+	logInfo(fmt.Sprintf("Credits: 10 (free tier)"))
 	printDivider()
 }
 

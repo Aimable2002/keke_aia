@@ -24,6 +24,9 @@ func main() {
 	case "init":
 		handleInit()
 
+	case "signup":
+		handleSignup()
+
 	case "login":
 		handleLogin()
 
@@ -39,7 +42,7 @@ func main() {
 	case "ask":
 		handleAsk(args[1:])
 
-	case "research": // ✅ NEW: ML Research Assistant
+	case "research":
 		handleResearch(args[1:])
 
 	case "signal":
@@ -86,7 +89,8 @@ func showHelp() {
 
 	fmt.Println("  ACCOUNT")
 	fmt.Println()
-	printCmd("login", "Log in with GitHub")
+	printCmd("signup", "Create new account")
+	printCmd("login", "Log in (Email or Gmail)")
 	printCmd("logout", "Log out")
 	printCmd("whoami", "Show account info")
 	printCmd("credits", "Check credit balance")

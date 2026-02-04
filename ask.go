@@ -195,7 +195,7 @@ func handleReadFile(action Action) string {
 		}
 	}
 
-	content, err := ioutil.ReadFile(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Sprintf("Error reading file: %v", err)
 	}
@@ -223,7 +223,7 @@ func handleWriteFile(action Action) string {
 	}
 
 	// Write file
-	if err := ioutil.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Sprintf("Error writing file: %v", err)
 	}
 
@@ -350,7 +350,7 @@ func requestPermission(permType, message string) bool {
 
 func createSnapshot(filePath string) error {
 	// Check if file exists
-	content, err := ioutil.ReadFile(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return err // File doesn't exist yet, no snapshot needed
 	}
@@ -361,7 +361,7 @@ func createSnapshot(filePath string) error {
 	snapshotPath := filepath.Join(projectSnapshotsDir(), snapshotName)
 
 	// Write snapshot
-	if err := ioutil.WriteFile(snapshotPath, content, 0644); err != nil {
+	if err := os.WriteFile(snapshotPath, content, 0644); err != nil {
 		return err
 	}
 
@@ -370,7 +370,7 @@ func createSnapshot(filePath string) error {
 }
 
 func readPermissions() (*Permissions, error) {
-	data, err := ioutil.ReadFile(projectPermissionsFile())
+	data, err := os.ReadFile(projectPermissionsFile())
 	if err != nil {
 		return &Permissions{}, nil // Return empty permissions if file doesn't exist
 	}

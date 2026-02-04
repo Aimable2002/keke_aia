@@ -1,6 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strings"
+)
 
 // ANSI color codes
 const (
@@ -50,4 +55,11 @@ func prompt(msg string) string {
 	var input string
 	fmt.Scanln(&input)
 	return input
+}
+
+func promptPassword(msg string) string {
+	fmt.Printf("%s%s►%s %s: ", dim, cyan, reset, msg)
+	reader := bufio.NewReader(os.Stdin)
+	password, _ := reader.ReadString('\n')
+	return strings.TrimSpace(password)
 }
