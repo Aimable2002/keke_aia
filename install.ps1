@@ -1,5 +1,6 @@
 # Keke CLI Installer for Windows
 # Usage: irm https://install.keke.dev/win | iex
+#    or: irm https://raw.githubusercontent.com/Aimable2002/keke_aia/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
@@ -19,7 +20,11 @@ Write-Host "  AI developer in your terminal" -ForegroundColor DarkGray
 Write-Host ""
 
 # Enable TLS 1.2 for older PowerShell versions
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+} catch {
+    # Already set or not needed
+}
 
 Info "Detecting system..."
 
@@ -142,16 +147,19 @@ try {
     Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile -ErrorAction Stop
     $ChecksumVerified = $true
 } catch {
-    Warn "Could not download checksums: $($_.Exception.Message)"
-    Warn "Continuing without checksum verification"
+    Warn "Could not download checksums (this is okay for now)"
+    # Don't show the full error message to keep output clean
 }
 
 Info "Downloading $ArchiveName..."
 $ArchivePath = Join-Path $TmpDir "keke.zip"
 try {
+    # Use progress bar for better UX on slow connections
+    $ProgressPreference = 'SilentlyContinue'  # Faster downloads
     Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath -ErrorAction Stop
+    $ProgressPreference = 'Continue'
 } catch {
-    Err "Failed to download binary: $($_.Exception.Message)"
+    Err "Failed to download binary from $DownloadURL`nError: $($_.Exception.Message)"
 }
 
 if ($ChecksumVerified) {
@@ -168,23 +176,29 @@ if ($ChecksumVerified) {
     }
 
     if ([string]::IsNullOrEmpty($ExpectedHash)) {
-        Warn "Checksum not found for $ArchiveName in checksums file"
+        Warn "Checksum not found for $ArchiveName, continuing anyway"
     } else {
         $ActualHash = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLower()
 
         if ($ActualHash -ne $ExpectedHash) {
-            Err "Checksum mismatch! Expected: $ExpectedHash, Got: $ActualHash"
+            Err "Checksum mismatch! Expected: $ExpectedHash, Got: $ActualHash`nThis may indicate a corrupted download or security issue."
         }
         Success "Checksum verified"
     }
 }
 
 Info "Extracting..."
-Expand-Archive -Path $ArchivePath -DestinationPath $TmpDir -Force
+try {
+    Expand-Archive -Path $ArchivePath -DestinationPath $TmpDir -Force
+} catch {
+    Err "Failed to extract archive: $($_.Exception.Message)"
+}
 
 $BinaryPath = Join-Path $TmpDir $BinaryName
 if (-not (Test-Path $BinaryPath)) {
-    Err "Binary '$BinaryName' not found in archive"
+    # List what's actually in the archive for debugging
+    $extractedFiles = Get-ChildItem -Path $TmpDir -Recurse | Select-Object -ExpandProperty Name
+    Err "Binary '$BinaryName' not found in archive. Found files: $($extractedFiles -join ', ')"
 }
 
 Info "Installing to $InstallDir..."
@@ -193,38 +207,59 @@ if (-not (Test-Path $InstallDir)) {
     New-Item -Type Directory -Path $InstallDir | Out-Null
 }
 
-Copy-Item -Path $BinaryPath -Destination (Join-Path $InstallDir $BinaryName) -Force
+try {
+    Copy-Item -Path $BinaryPath -Destination (Join-Path $InstallDir $BinaryName) -Force
+} catch {
+    Err "Failed to copy binary to installation directory: $($_.Exception.Message)"
+}
 
+# Add to PATH if not already there
 $CurrentPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
 
 if ($CurrentPath -notmatch [regex]::Escape($InstallDir)) {
     Info "Adding to PATH..."
-    [System.Environment]::SetEnvironmentVariable("Path", "$CurrentPath;$InstallDir", "User")
-    $env:Path = "$env:Path;$InstallDir"
+    try {
+        [System.Environment]::SetEnvironmentVariable("Path", "$CurrentPath;$InstallDir", "User")
+        $env:Path = "$env:Path;$InstallDir"
+    } catch {
+        Warn "Could not add to PATH automatically. Please add manually: $InstallDir"
+    }
 }
 
 # Cleanup temp directory
-if (Test-Path $TmpDir) {
-    Remove-Item -Recurse -Force $TmpDir
+try {
+    if (Test-Path $TmpDir) {
+        Remove-Item -Recurse -Force $TmpDir
+    }
+} catch {
+    # Cleanup failure is not critical
 }
 
 $InstalledBinary = Join-Path $InstallDir $BinaryName
 if (Test-Path $InstalledBinary) {
     Success "Keke installed successfully"
     Write-Host ""
+    
+    # Try to get version info
     try {
         $version = & $InstalledBinary version 2>&1
-        Info "Version: $version"
+        if ($LASTEXITCODE -eq 0) {
+            Info "Version: $version"
+        }
     } catch {
-        # Version command failed, but installation succeeded
+        # Version command not available, that's okay
     }
-    Info "Next steps:"
-    Write-Host "  1. cd your-project"
-    Write-Host "  2. keke init"
-    Write-Host "  3. keke login"
-    Write-Host "  4. keke credits"
+    
     Write-Host ""
-    Info "Restart your terminal for PATH changes to take effect"
+    Info "Next steps:"
+    Write-Host "  1. Restart your terminal (or run: refreshenv)" -ForegroundColor Gray
+    Write-Host "  2. cd your-project" -ForegroundColor Gray
+    Write-Host "  3. keke init" -ForegroundColor Gray
+    Write-Host "  4. keke login" -ForegroundColor Gray
+    Write-Host "  5. keke credits" -ForegroundColor Gray
+    Write-Host ""
+    Info "Documentation: https://github.com/$GitHubOwner/$GitHubRepo"
+    Write-Host ""
 } else {
-    Err "Installation failed"
+    Err "Installation failed - binary not found at expected location"
 }
