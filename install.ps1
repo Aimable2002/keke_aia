@@ -19,12 +19,62 @@ Write-Host ""
 
 Info "Detecting system..."
 
-$Arch = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq [System.Runtime.InteropServices.Architecture]::X64) {
-    "amd64"
-} elseif ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
-    "arm64"
-} else {
-    Err "Unsupported architecture"
+# Robust architecture detection with multiple fallback methods
+$Arch = $null
+
+# Method 1: Environment variable (most reliable)
+$envArch = $env:PROCESSOR_ARCHITECTURE
+if ($envArch -eq "AMD64") {
+    $Arch = "amd64"
+} elseif ($envArch -eq "ARM64") {
+    $Arch = "arm64"
+} elseif ($envArch -eq "x86") {
+    # Check if running 32-bit PowerShell on 64-bit Windows
+    if ($env:PROCESSOR_ARCHITEW6432 -eq "AMD64") {
+        $Arch = "amd64"
+    } elseif ($env:PROCESSOR_ARCHITEW6432 -eq "ARM64") {
+        $Arch = "arm64"
+    }
+}
+
+# Method 2: Try RuntimeInformation (modern systems)
+if ([string]::IsNullOrEmpty($Arch)) {
+    try {
+        $procArch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+        if ($procArch -eq 4) {  # X64
+            $Arch = "amd64"
+        } elseif ($procArch -eq 8) {  # Arm64
+            $Arch = "arm64"
+        }
+    } catch {
+        # Not available on older systems, continue to next method
+    }
+}
+
+# Method 3: WMI fallback (older systems)
+if ([string]::IsNullOrEmpty($Arch)) {
+    try {
+        $wmiArch = (Get-WmiObject -Class Win32_Processor).Architecture
+        if ($wmiArch -eq 9) {  # x64
+            $Arch = "amd64"
+        } elseif ($wmiArch -eq 12) {  # ARM64
+            $Arch = "arm64"
+        }
+    } catch {
+        # WMI failed, continue
+    }
+}
+
+# Final check
+if ([string]::IsNullOrEmpty($Arch)) {
+    Write-Host ""
+    Write-Host "  Unable to detect system architecture automatically." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Detected values:" -ForegroundColor Gray
+    Write-Host "    PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE" -ForegroundColor Gray
+    Write-Host "    PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432" -ForegroundColor Gray
+    Write-Host ""
+    Err "Unsupported or undetectable architecture. Please report this issue at https://github.com/$GitHubOwner/$GitHubRepo/issues"
 }
 
 Info "System: windows / $Arch"
@@ -58,11 +108,19 @@ Register-EngineEvent PowerShell.Exiting -Action $cleanupBlock | Out-Null
 
 Info "Downloading checksums..."
 $ChecksumFile = Join-Path $TmpDir "checksums.txt"
-Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile
+try {
+    Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile
+} catch {
+    Err "Failed to download checksums: $_"
+}
 
 Info "Downloading $ArchiveName..."
 $ArchivePath = Join-Path $TmpDir "keke.zip"
-Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath
+try {
+    Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath
+} catch {
+    Err "Failed to download binary: $_"
+}
 
 Info "Verifying checksum..."
 
@@ -70,7 +128,7 @@ $ChecksumContent = Get-Content $ChecksumFile
 $ExpectedHash = $null
 
 foreach ($line in $ChecksumContent) {
-    if ($line -match $ArchiveName) {
+    if ($line -match [regex]::Escape($ArchiveName)) {
         $ExpectedHash = ($line -split "\s+")[0]
         break
     }
@@ -112,12 +170,21 @@ if ($CurrentPath -notmatch [regex]::Escape($InstallDir)) {
     $env:Path = "$env:Path;$InstallDir"
 }
 
+# Cleanup temp directory
+if (Test-Path $TmpDir) {
+    Remove-Item -Recurse -Force $TmpDir
+}
+
 $InstalledBinary = Join-Path $InstallDir $BinaryName
 if (Test-Path $InstalledBinary) {
     Success "Keke installed successfully"
     Write-Host ""
-    $version = & $InstalledBinary version
-    Info "Version: $version"
+    try {
+        $version = & $InstalledBinary version 2>&1
+        Info "Version: $version"
+    } catch {
+        # Version command failed, but installation succeeded
+    }
     Info "Next steps:"
     Write-Host "  1. cd your-project"
     Write-Host "  2. keke init"
