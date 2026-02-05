@@ -81,16 +81,37 @@ Info "System: windows / $Arch"
 
 Info "Checking latest version..."
 
+# Try to get latest version - multiple methods for reliability
+$LatestVersion = $null
+
+# Method 1: Use GitHub API (most reliable)
 try {
-    $response = Invoke-WebRequest -Uri "https://github.com/$GitHubOwner/$GitHubRepo/releases/latest" -MaximumRedirection 0 -ErrorAction SilentlyContinue
+    $apiUrl = "https://api.github.com/repos/$GitHubOwner/$GitHubRepo/releases/latest"
+    $release = Invoke-RestMethod -Uri $apiUrl -ErrorAction Stop
+    $LatestVersion = $release.tag_name
 } catch {
-    $response = $_.Exception.Response
+    # API method failed, try redirect method
 }
 
-$LatestVersion = $response.Headers["Location"] -split "/" | Select-Object -Last 1
+# Method 2: Follow redirect (fallback)
+if ([string]::IsNullOrEmpty($LatestVersion)) {
+    try {
+        $response = Invoke-WebRequest -Uri "https://github.com/$GitHubOwner/$GitHubRepo/releases/latest" -MaximumRedirection 0 -ErrorAction SilentlyContinue
+    } catch {
+        $response = $_.Exception.Response
+    }
+    
+    if ($response -and $response.Headers -and $response.Headers["Location"]) {
+        $location = $response.Headers["Location"]
+        if ($location -is [array]) {
+            $location = $location[0]
+        }
+        $LatestVersion = $location -split "/" | Select-Object -Last 1
+    }
+}
 
 if ([string]::IsNullOrEmpty($LatestVersion)) {
-    Err "Could not determine latest version"
+    Err "Could not determine latest version. Please check your internet connection and try again."
 }
 
 Info "Latest version: $LatestVersion"
@@ -109,7 +130,7 @@ Register-EngineEvent PowerShell.Exiting -Action $cleanupBlock | Out-Null
 Info "Downloading checksums..."
 $ChecksumFile = Join-Path $TmpDir "checksums.txt"
 try {
-    Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile
+    Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile -ErrorAction Stop
 } catch {
     Err "Failed to download checksums: $_"
 }
@@ -117,7 +138,7 @@ try {
 Info "Downloading $ArchiveName..."
 $ArchivePath = Join-Path $TmpDir "keke.zip"
 try {
-    Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath
+    Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath -ErrorAction Stop
 } catch {
     Err "Failed to download binary: $_"
 }
