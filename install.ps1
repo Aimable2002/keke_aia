@@ -1,6 +1,5 @@
 # Keke CLI Installer for Windows
-# Usage: irm https://install.keke.dev/win | iex
-#    or: irm https://raw.githubusercontent.com/Aimable2002/keke_aia/main/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/Aimable2002/keke_aia/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
@@ -19,12 +18,8 @@ Write-Host "  Keke CLI Installer" -ForegroundColor Cyan
 Write-Host "  AI developer in your terminal" -ForegroundColor DarkGray
 Write-Host ""
 
-# Enable TLS 1.2 for older PowerShell versions
-try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-} catch {
-    # Already set or not needed
-}
+# Force TLS 1.2 - CRITICAL for GitHub downloads
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
 
 Info "Detecting system..."
 
@@ -144,23 +139,68 @@ $ChecksumVerified = $false
 Info "Downloading checksums..."
 $ChecksumFile = Join-Path $TmpDir "checksums.txt"
 try {
-    Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile -ErrorAction Stop
+    # Disable progress bar for compatibility
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile -UseBasicParsing -ErrorAction Stop
     $ChecksumVerified = $true
 } catch {
     Warn "Could not download checksums (this is okay for now)"
-    # Don't show the full error message to keep output clean
 }
 
 Info "Downloading $ArchiveName..."
 $ArchivePath = Join-Path $TmpDir "keke.zip"
+
+# Try multiple download methods for maximum compatibility
+$downloadSuccess = $false
+
+# Method 1: Invoke-WebRequest with UseBasicParsing (most compatible)
 try {
-    # Use progress bar for better UX on slow connections
-    $ProgressPreference = 'SilentlyContinue'  # Faster downloads
-    Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath -ErrorAction Stop
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath -UseBasicParsing -TimeoutSec 300 -ErrorAction Stop
+    $downloadSuccess = $true
     $ProgressPreference = 'Continue'
 } catch {
-    Err "Failed to download binary from $DownloadURL`nError: $($_.Exception.Message)"
+    $method1Error = $_.Exception.Message
 }
+
+# Method 2: .NET WebClient (fallback for older systems)
+if (-not $downloadSuccess) {
+    try {
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($DownloadURL, $ArchivePath)
+        $downloadSuccess = $true
+    } catch {
+        $method2Error = $_.Exception.Message
+    }
+}
+
+# Method 3: Start-BitsTransfer (last resort, requires BITS service)
+if (-not $downloadSuccess) {
+    try {
+        Import-Module BitsTransfer -ErrorAction SilentlyContinue
+        Start-BitsTransfer -Source $DownloadURL -Destination $ArchivePath -ErrorAction Stop
+        $downloadSuccess = $true
+    } catch {
+        $method3Error = $_.Exception.Message
+    }
+}
+
+if (-not $downloadSuccess) {
+    Write-Host ""
+    Write-Host "  Failed to download using all methods:" -ForegroundColor Red
+    if ($method1Error) { Write-Host "  - Invoke-WebRequest: $method1Error" -ForegroundColor Gray }
+    if ($method2Error) { Write-Host "  - WebClient: $method2Error" -ForegroundColor Gray }
+    if ($method3Error) { Write-Host "  - BITS: $method3Error" -ForegroundColor Gray }
+    Write-Host ""
+    Write-Host "  Please try:" -ForegroundColor Yellow
+    Write-Host "  1. Download manually from: $DownloadURL" -ForegroundColor Gray
+    Write-Host "  2. Extract to: $InstallDir" -ForegroundColor Gray
+    Write-Host "  3. Add to PATH: $InstallDir" -ForegroundColor Gray
+    Write-Host ""
+    Err "Download failed"
+}
+
+Success "Download complete"
 
 if ($ChecksumVerified) {
     Info "Verifying checksum..."
@@ -252,7 +292,7 @@ if (Test-Path $InstalledBinary) {
     
     Write-Host ""
     Info "Next steps:"
-    Write-Host "  1. Restart your terminal (or run: refreshenv)" -ForegroundColor Gray
+    Write-Host "  1. Restart your terminal (or run: `$env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User'))" -ForegroundColor Gray
     Write-Host "  2. cd your-project" -ForegroundColor Gray
     Write-Host "  3. keke init" -ForegroundColor Gray
     Write-Host "  4. keke login" -ForegroundColor Gray
