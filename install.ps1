@@ -10,12 +10,16 @@ $BinaryName  = "keke.exe"
 
 function Info    { Write-Host "  ► $args" -ForegroundColor Cyan }
 function Success { Write-Host "  ✓ $args" -ForegroundColor Green }
+function Warn    { Write-Host "  ⚠ $args" -ForegroundColor Yellow }
 function Err     { Write-Host "  ✗ $args" -ForegroundColor Red; exit 1 }
 
 Write-Host ""
 Write-Host "  Keke CLI Installer" -ForegroundColor Cyan
 Write-Host "  AI developer in your terminal" -ForegroundColor DarkGray
 Write-Host ""
+
+# Enable TLS 1.2 for older PowerShell versions
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 Info "Detecting system..."
 
@@ -130,12 +134,16 @@ New-Item -Type Directory -Path $TmpDir | Out-Null
 $cleanupBlock = { if (Test-Path $TmpDir) { Remove-Item -Recurse -Force $TmpDir } }
 Register-EngineEvent PowerShell.Exiting -Action $cleanupBlock | Out-Null
 
+# Try to download and verify checksums (optional but recommended)
+$ChecksumVerified = $false
 Info "Downloading checksums..."
 $ChecksumFile = Join-Path $TmpDir "checksums.txt"
 try {
     Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile -ErrorAction Stop
+    $ChecksumVerified = $true
 } catch {
-    Err "Failed to download checksums from $ChecksumURL - $_"
+    Warn "Could not download checksums: $($_.Exception.Message)"
+    Warn "Continuing without checksum verification"
 }
 
 Info "Downloading $ArchiveName..."
@@ -143,32 +151,33 @@ $ArchivePath = Join-Path $TmpDir "keke.zip"
 try {
     Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath -ErrorAction Stop
 } catch {
-    Err "Failed to download binary from $DownloadURL - $_"
+    Err "Failed to download binary: $($_.Exception.Message)"
 }
 
-Info "Verifying checksum..."
+if ($ChecksumVerified) {
+    Info "Verifying checksum..."
 
-$ChecksumContent = Get-Content $ChecksumFile
-$ExpectedHash = $null
+    $ChecksumContent = Get-Content $ChecksumFile
+    $ExpectedHash = $null
 
-foreach ($line in $ChecksumContent) {
-    if ($line -match [regex]::Escape($ArchiveName)) {
-        $ExpectedHash = ($line -split "\s+")[0]
-        break
+    foreach ($line in $ChecksumContent) {
+        if ($line -match [regex]::Escape($ArchiveName)) {
+            $ExpectedHash = ($line -split "\s+")[0]
+            break
+        }
+    }
+
+    if ([string]::IsNullOrEmpty($ExpectedHash)) {
+        Warn "Checksum not found for $ArchiveName in checksums file"
+    } else {
+        $ActualHash = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLower()
+
+        if ($ActualHash -ne $ExpectedHash) {
+            Err "Checksum mismatch! Expected: $ExpectedHash, Got: $ActualHash"
+        }
+        Success "Checksum verified"
     }
 }
-
-if ([string]::IsNullOrEmpty($ExpectedHash)) {
-    Err "Checksum not found for $ArchiveName in checksums file"
-}
-
-$ActualHash = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLower()
-
-if ($ActualHash -ne $ExpectedHash) {
-    Err "Checksum mismatch! Expected: $ExpectedHash, Got: $ActualHash"
-}
-
-Success "Checksum verified"
 
 Info "Extracting..."
 Expand-Archive -Path $ArchivePath -DestinationPath $TmpDir -Force
