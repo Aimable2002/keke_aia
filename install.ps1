@@ -81,37 +81,40 @@ Info "System: windows / $Arch"
 
 Info "Checking latest version..."
 
-# Try to get latest version - multiple methods for reliability
+# Get latest version - handles pre-releases
 $LatestVersion = $null
+$LatestRelease = $null
 
-# Method 1: Use GitHub API (most reliable)
 try {
-    $apiUrl = "https://api.github.com/repos/$GitHubOwner/$GitHubRepo/releases/latest"
-    $release = Invoke-RestMethod -Uri $apiUrl -ErrorAction Stop
-    $LatestVersion = $release.tag_name
+    # Use GitHub API to get all releases (including pre-releases)
+    $apiUrl = "https://api.github.com/repos/$GitHubOwner/$GitHubRepo/releases"
+    $releases = Invoke-RestMethod -Uri $apiUrl -ErrorAction Stop
+    
+    if ($releases -and $releases.Count -gt 0) {
+        # Get the most recent release (first in the list)
+        $LatestRelease = $releases[0]
+        $LatestVersion = $LatestRelease.tag_name
+    }
 } catch {
-    # API method failed, try redirect method
+    # Silently continue to fallback method
 }
 
-# Method 2: Follow redirect (fallback)
+# Fallback: try to get tags if releases API failed
 if ([string]::IsNullOrEmpty($LatestVersion)) {
     try {
-        $response = Invoke-WebRequest -Uri "https://github.com/$GitHubOwner/$GitHubRepo/releases/latest" -MaximumRedirection 0 -ErrorAction SilentlyContinue
-    } catch {
-        $response = $_.Exception.Response
-    }
-    
-    if ($response -and $response.Headers -and $response.Headers["Location"]) {
-        $location = $response.Headers["Location"]
-        if ($location -is [array]) {
-            $location = $location[0]
+        $tagsUrl = "https://api.github.com/repos/$GitHubOwner/$GitHubRepo/tags"
+        $tags = Invoke-RestMethod -Uri $tagsUrl -ErrorAction Stop
+        
+        if ($tags -and $tags.Count -gt 0) {
+            $LatestVersion = $tags[0].name
         }
-        $LatestVersion = $location -split "/" | Select-Object -Last 1
+    } catch {
+        # Continue to final fallback
     }
 }
 
 if ([string]::IsNullOrEmpty($LatestVersion)) {
-    Err "Could not determine latest version. Please check your internet connection and try again."
+    Err "Could not determine latest version. Please check your internet connection and verify that releases exist at https://github.com/$GitHubOwner/$GitHubRepo/releases"
 }
 
 Info "Latest version: $LatestVersion"
@@ -132,7 +135,7 @@ $ChecksumFile = Join-Path $TmpDir "checksums.txt"
 try {
     Invoke-WebRequest -Uri $ChecksumURL -OutFile $ChecksumFile -ErrorAction Stop
 } catch {
-    Err "Failed to download checksums: $_"
+    Err "Failed to download checksums from $ChecksumURL - $_"
 }
 
 Info "Downloading $ArchiveName..."
@@ -140,7 +143,7 @@ $ArchivePath = Join-Path $TmpDir "keke.zip"
 try {
     Invoke-WebRequest -Uri $DownloadURL -OutFile $ArchivePath -ErrorAction Stop
 } catch {
-    Err "Failed to download binary: $_"
+    Err "Failed to download binary from $DownloadURL - $_"
 }
 
 Info "Verifying checksum..."
@@ -156,7 +159,7 @@ foreach ($line in $ChecksumContent) {
 }
 
 if ([string]::IsNullOrEmpty($ExpectedHash)) {
-    Err "Checksum not found for $ArchiveName"
+    Err "Checksum not found for $ArchiveName in checksums file"
 }
 
 $ActualHash = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLower()
@@ -172,7 +175,7 @@ Expand-Archive -Path $ArchivePath -DestinationPath $TmpDir -Force
 
 $BinaryPath = Join-Path $TmpDir $BinaryName
 if (-not (Test-Path $BinaryPath)) {
-    Err "Binary not found in archive"
+    Err "Binary '$BinaryName' not found in archive"
 }
 
 Info "Installing to $InstallDir..."
