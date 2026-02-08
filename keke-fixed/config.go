@@ -120,3 +120,12 @@ type Permissions struct {
 	Write   bool `json:"write"`
 	Execute bool `json:"execute"`
 }
+
+// Write permissions to project
+func writePermissions(perms *Permissions) error {
+	data, err := json.MarshalIndent(perms, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(projectPermissionsFile(), data, 0644)
+}

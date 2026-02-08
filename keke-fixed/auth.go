@@ -19,7 +19,6 @@ import (
 // ─── LOGIN WITH CHOICE ───────────────────────────────────────────────────────
 
 func handleLogin() {
-	printHeader()
 	if isLoggedIn() {
 		auth, _ := readAuth()
 		logWarning(fmt.Sprintf("Already logged in as %s", auth.Email))
@@ -283,7 +282,6 @@ func handleGmailLogin() {
 // ─── SIGNUP ──────────────────────────────────────────────────────────────────
 
 func handleSignup() {
-	printHeader()
 	if isLoggedIn() {
 		auth, _ := readAuth()
 		logWarning(fmt.Sprintf("Already logged in as %s", auth.Email))

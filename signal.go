@@ -8,21 +8,6 @@ import (
 	"strings"
 )
 
-// ═══════════════════════════════════════════════════════════════════════════
-// SIGNAL - Forex Market Analysis & Trading Predictions
-// ═══════════════════════════════════════════════════════════════════════════
-// AI analyzes forex pairs and predicts:
-// - Trade direction (BUY/SELL/HOLD)
-// - Entry price
-// - Take Profit (TP)
-// - Stop Loss (SL)
-// - Risk/Reward ratio
-// - Timeframe
-// - Professional analysis
-//
-// IMPORTANT: This is AI prediction, NOT financial advice
-// Does NOT execute trades - only predicts and advises
-
 func handleSignal(args []string) {
 	if !isLoggedIn() {
 		logError("Not logged in. Run 'keke login'")
@@ -30,29 +15,47 @@ func handleSignal(args []string) {
 	}
 
 	if len(args) == 0 {
-		logError("Usage: keke signal <PAIR> [--timeframe 1H|4H|1D]")
+		logError("Usage: keke signal <SYMBOL> [--timeframe 1H|4H|1D] [--provider anthropic|openai|groq|openrouter]")
 		logInfo("Examples:")
-		logInfo("  keke signal EURUSD")
-		logInfo("  keke signal GBPUSD --timeframe 4H")
-		logInfo("  keke signal XAUUSD --timeframe 1D")
-		logInfo("  keke signal BTCUSD --timeframe 1H")
+		logInfo("  keke signal SPY")
+		logInfo("  keke signal AAPL --timeframe 4H")
+		logInfo("  keke signal TSLA --timeframe 1D --provider anthropic")
+		logInfo("")
+		logInfo("Popular symbols:")
+		logInfo("  Stocks: SPY, QQQ, AAPL, TSLA, NVDA, MSFT")
+		logInfo("  Crypto: BTCUSD, ETHUSD, SOLUSD")
 		return
 	}
 
-	// Parse arguments
-	pair := strings.ToUpper(args[0])
-	timeframe := "4H" // default
+	symbol := strings.ToUpper(args[0])
+	timeframe := "4H"
+	provider := "anthropic"
 
 	for i := 1; i < len(args); i++ {
 		if args[i] == "--timeframe" && i+1 < len(args) {
 			timeframe = strings.ToUpper(args[i+1])
 			i++
+		} else if args[i] == "--provider" && i+1 < len(args) {
+			provider = strings.ToLower(args[i+1])
+			i++
 		}
 	}
 
-	// Validate pair format
-	if len(pair) < 6 {
-		logError("Invalid pair format. Examples: EURUSD, GBPUSD, XAUUSD, BTCUSD")
+	if len(symbol) < 2 {
+		logError("Invalid symbol format. Examples: SPY, AAPL, TSLA, BTCUSD")
+		return
+	}
+
+	validProviders := []string{"anthropic", "openai", "groq", "openrouter"}
+	isValidProvider := false
+	for _, vp := range validProviders {
+		if provider == vp {
+			isValidProvider = true
+			break
+		}
+	}
+	if !isValidProvider {
+		logError(fmt.Sprintf("Invalid provider: %s. Valid options: anthropic, openai, groq, openrouter", provider))
 		return
 	}
 
@@ -62,33 +65,35 @@ func handleSignal(args []string) {
 		return
 	}
 
-	logInfo(fmt.Sprintf("🔍 Analyzing %s on %s timeframe...", pair, timeframe))
-	logInfo("AI is thinking deeply about market conditions...")
+	providerName := getProviderDisplayName(provider)
+	symbolType := "stock"
+	if strings.HasSuffix(symbol, "USD") {
+		symbolType = "crypto"
+	}
+	
+	logInfo(fmt.Sprintf("🔍 Analyzing %s (%s) on %s timeframe...", symbol, symbolType, timeframe))
+	logInfo(fmt.Sprintf("🤖 Using %s AI", providerName))
 	printDivider()
 
-	// Call AI for market analysis
-	signal, err := getForexSignal(pair, timeframe, auth)
+	signal, err := getTradeSignal(symbol, timeframe, provider, auth)
 	if err != nil {
 		logError(fmt.Sprintf("Signal error: %v", err))
 		return
 	}
 
-	// Display signal
 	displaySignal(signal)
 
 	printDivider()
+	logInfo(fmt.Sprintf("AI Provider:  %s", getProviderDisplayName(signal.AIProvider)))
 	logInfo(fmt.Sprintf("Credits used: %d", signal.CreditsUsed))
 	logWarning("⚠ This is AI analysis, NOT financial advice. Trade at your own risk.")
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// GET FOREX SIGNAL (calls edge function)
-// ═══════════════════════════════════════════════════════════════════════════
-
-func getForexSignal(pair, timeframe string, auth *AuthData) (*ForexSignal, error) {
+func getTradeSignal(symbol, timeframe, provider string, auth *AuthData) (*TradeSignal, error) {
 	payload := map[string]interface{}{
-		"pair":      pair,
-		"timeframe": timeframe,
+		"symbol":      symbol,
+		"timeframe":   timeframe,
+		"ai_provider": provider,
 	}
 
 	jsonData, _ := json.Marshal(payload)
@@ -112,7 +117,7 @@ func getForexSignal(pair, timeframe string, auth *AuthData) (*ForexSignal, error
 		return nil, fmt.Errorf("server error: %s", string(body))
 	}
 
-	var signal ForexSignal
+	var signal TradeSignal
 	if err := json.NewDecoder(resp.Body).Decode(&signal); err != nil {
 		return nil, err
 	}
@@ -120,14 +125,9 @@ func getForexSignal(pair, timeframe string, auth *AuthData) (*ForexSignal, error
 	return &signal, nil
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DISPLAY SIGNAL (beautiful terminal output)
-// ═══════════════════════════════════════════════════════════════════════════
-
-func displaySignal(signal *ForexSignal) {
+func displaySignal(signal *TradeSignal) {
 	fmt.Println()
 	
-	// Header with direction
 	directionColor := green
 	directionSymbol := "▲"
 	directionText := "BUY"
@@ -142,16 +142,14 @@ func displaySignal(signal *ForexSignal) {
 		directionText = "HOLD"
 	}
 	
-	fmt.Printf("%s%s%s %s %s%s\n", bold, directionColor, directionSymbol, directionText, signal.Pair, reset)
+	fmt.Printf("%s%s%s %s %s%s\n", bold, directionColor, directionSymbol, directionText, signal.Symbol, reset)
 	fmt.Println()
 
-	// Price levels
-	logInfo(fmt.Sprintf("Entry Price:  %.5f", signal.EntryPrice))
-	fmt.Printf("%s%sTP (Target):   %.5f%s (+%.1f pips)\n", bold, green, signal.TakeProfit, reset, signal.TPPips)
-	fmt.Printf("%s%sSL (Stop):     %.5f%s (-%.1f pips)\n", bold, red, signal.StopLoss, reset, signal.SLPips)
+	logInfo(fmt.Sprintf("Entry Price:  $%.2f", signal.EntryPrice))
+	fmt.Printf("%s%sTP (Target):   $%.2f%s (+%.2f points)\n", bold, green, signal.TakeProfit, reset, signal.TPPips)
+	fmt.Printf("%s%sSL (Stop):     $%.2f%s (-%.2f points)\n", bold, red, signal.StopLoss, reset, signal.SLPips)
 	fmt.Println()
 
-	// Risk/Reward & Confidence
 	logInfo(fmt.Sprintf("Risk/Reward:  1:%.2f", signal.RiskReward))
 	logInfo(fmt.Sprintf("Timeframe:    %s", signal.Timeframe))
 	
@@ -165,12 +163,10 @@ func displaySignal(signal *ForexSignal) {
 	fmt.Printf("%s%sConfidence:   %d%%%s\n", bold, confidenceColor, signal.Confidence, reset)
 	fmt.Println()
 
-	// Market Analysis
 	fmt.Printf("%s━━━ Market Analysis ━━━%s\n", dim, reset)
 	fmt.Println(signal.Analysis)
 	fmt.Println()
 
-	// Key Factors
 	if len(signal.KeyFactors) > 0 {
 		fmt.Printf("%s━━━ Key Factors ━━━%s\n", dim, reset)
 		for _, factor := range signal.KeyFactors {
@@ -179,7 +175,6 @@ func displaySignal(signal *ForexSignal) {
 		fmt.Println()
 	}
 
-	// Warnings
 	if len(signal.Warnings) > 0 {
 		fmt.Printf("%s%s━━━ Risk Warnings ━━━%s\n", bold, yellow, reset)
 		for _, warning := range signal.Warnings {
@@ -188,7 +183,6 @@ func displaySignal(signal *ForexSignal) {
 		fmt.Println()
 	}
 
-	// Trade Plan
 	if signal.TradePlan != "" {
 		fmt.Printf("%s━━━ Trade Plan ━━━%s\n", dim, reset)
 		fmt.Println(signal.TradePlan)
@@ -196,24 +190,37 @@ func displaySignal(signal *ForexSignal) {
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// TYPES
-// ═══════════════════════════════════════════════════════════════════════════
+func getProviderDisplayName(provider string) string {
+	switch provider {
+	case "anthropic":
+		return "Anthropic Claude"
+	case "openai":
+		return "OpenAI GPT-4"
+	case "groq":
+		return "Groq Llama"
+	case "openrouter":
+		return "OpenRouter"
+	default:
+		return provider
+	}
+}
 
-type ForexSignal struct {
-	Pair        string   `json:"pair"`         // e.g., "EURUSD"
-	Direction   string   `json:"direction"`    // "BUY", "SELL", "HOLD"
-	EntryPrice  float64  `json:"entry_price"`  // Recommended entry
-	TakeProfit  float64  `json:"take_profit"`  // TP level
-	StopLoss    float64  `json:"stop_loss"`    // SL level
-	TPPips      float64  `json:"tp_pips"`      // TP in pips
-	SLPips      float64  `json:"sl_pips"`      // SL in pips
-	RiskReward  float64  `json:"risk_reward"`  // R:R ratio
-	Timeframe   string   `json:"timeframe"`    // e.g., "4H"
-	Confidence  int      `json:"confidence"`   // 0-100%
-	Analysis    string   `json:"analysis"`     // Detailed market analysis
-	KeyFactors  []string `json:"key_factors"`  // Bullet points of key factors
-	Warnings    []string `json:"warnings"`     // Risk warnings
-	TradePlan   string   `json:"trade_plan"`   // Step-by-step plan
-	CreditsUsed int      `json:"credits_used"` // Credits consumed
+type TradeSignal struct {
+	Symbol      string   `json:"symbol"`
+	Direction   string   `json:"direction"`
+	EntryPrice  float64  `json:"entry_price"`
+	TakeProfit  float64  `json:"take_profit"`
+	StopLoss    float64  `json:"stop_loss"`
+	TPPips      float64  `json:"tp_pips"`
+	SLPips      float64  `json:"sl_pips"`
+	RiskReward  float64  `json:"risk_reward"`
+	Timeframe   string   `json:"timeframe"`
+	Confidence  int      `json:"confidence"`
+	Analysis    string   `json:"analysis"`
+	KeyFactors  []string `json:"key_factors"`
+	Warnings    []string `json:"warnings"`
+	TradePlan   string   `json:"trade_plan"`
+	CreditsUsed int      `json:"credits_used"`
+	RoundsUsed  int      `json:"rounds_used"`
+	AIProvider  string   `json:"ai_provider"`
 }

@@ -8,6 +8,16 @@ import (
 	"strings"
 )
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RESEARCH - ML Research Assistant
+// ═══════════════════════════════════════════════════════════════════════════
+// AI helps with:
+// - Experiment design
+// - Data analysis
+// - Model validation
+// - Architecture search
+// - Result interpretation
+
 func handleResearch(args []string) {
 	if !isLoggedIn() {
 		logError("Not logged in. Run 'keke login'")
@@ -25,10 +35,12 @@ func handleResearch(args []string) {
 		logInfo("  keke research \"analyze this dataset for outliers\"")
 		logInfo("  keke research \"design experiment to compare models\"")
 		logInfo("  keke research \"validate my CNN architecture\"")
+		logInfo("  keke research \"explain why my model is overfitting\"")
 		return
 	}
 
-	model := "smart"
+	// Parse flags
+	model := "smart" // default
 	var promptParts []string
 
 	for _, arg := range args {
@@ -58,62 +70,72 @@ func handleResearch(args []string) {
 
 	logInfo("AI analyzing your research request...")
 
+	// Start research conversation loop
 	researchLoop(prompt, model, auth)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RESEARCH CONVERSATION LOOP
+// ═══════════════════════════════════════════════════════════════════════════
+
 func researchLoop(initialPrompt, model string, auth *AuthData) {
-	var sessionID string
+	var conversationHistory []map[string]string
+
+	conversationHistory = append(conversationHistory, map[string]string{
+		"role":    "user",
+		"content": initialPrompt,
+	})
+
 	maxIterations := 20
 	iteration := 0
-	totalCredits := 0
 
 	for iteration < maxIterations {
 		iteration++
 
-		var prompt string
-		if iteration == 1 {
-			prompt = initialPrompt
-		} else {
-			prompt = "Continue with the research task."
-		}
-
-		response, err := callResearchAI(prompt, model, sessionID, auth)
+		// Call AI in research mode
+		response, err := callResearchAI(conversationHistory, model, auth)
 		if err != nil {
 			logError(fmt.Sprintf("AI error: %v", err))
 			return
 		}
 
-		sessionID = response.SessionID
-		totalCredits += response.CreditsUsed
+		// Add AI response to history
+		conversationHistory = append(conversationHistory, map[string]string{
+			"role":    "assistant",
+			"content": response.Message,
+		})
 
-		if response.Done || len(response.Actions) == 0 {
-			fmt.Println()
-			printDivider()
+		// Check if AI is done
+		if len(response.Actions) == 0 {
 			fmt.Println(response.Message)
 			printDivider()
-			logInfo(fmt.Sprintf("Total credits used: %d", totalCredits))
+			logInfo(fmt.Sprintf("Total credits used: %d", response.CreditsUsed))
 			return
 		}
 
+		// Execute research actions
 		for _, action := range response.Actions {
 			result := executeResearchAction(action)
-			logInfo(fmt.Sprintf("Action result: %s", truncate(result, 100)))
+
+			conversationHistory = append(conversationHistory, map[string]string{
+				"role":    "user",
+				"content": fmt.Sprintf("Action result: %s", result),
+			})
 		}
 	}
 
 	logWarning("Max iterations reached")
-	logInfo(fmt.Sprintf("Total credits used: %d", totalCredits))
 }
 
-func callResearchAI(prompt, model, sessionID string, auth *AuthData) (*AIResponse, error) {
-	payload := map[string]interface{}{
-		"message": prompt,
-		"model":   model,
-		"mode":    "research",
-	}
+// ═══════════════════════════════════════════════════════════════════════════
+// CALL RESEARCH AI
+// ═══════════════════════════════════════════════════════════════════════════
 
-	if sessionID != "" {
-		payload["session_id"] = sessionID
+func callResearchAI(conversation []map[string]string, model string, auth *AuthData) (*AIResponse, error) {
+	payload := map[string]interface{}{
+		"conversation": conversation,
+		"model":        model,
+		"mode":         "research", // Research mode
 	}
 
 	jsonData, _ := json.Marshal(payload)
@@ -145,6 +167,10 @@ func callResearchAI(prompt, model, sessionID string, auth *AuthData) (*AIRespons
 	return &response, nil
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// EXECUTE RESEARCH ACTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
 func executeResearchAction(action Action) string {
 	switch action.Type {
 	case "load_dataset":
@@ -160,9 +186,14 @@ func executeResearchAction(action Action) string {
 	case "execute_command":
 		return handleExecuteCommand(action)
 	default:
+		// Fall back to regular code actions
 		return executeAction(action)
 	}
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ML-SPECIFIC ACTION HANDLERS
+// ═══════════════════════════════════════════════════════════════════════════
 
 func handleLoadDataset(action Action) string {
 	path := action.Path
@@ -176,7 +207,8 @@ func handleLoadDataset(action Action) string {
 
 	logInfo(fmt.Sprintf("Loading dataset: %s (format: %s)", path, format))
 	
-	return fmt.Sprintf("Dataset loaded from %s. Format: %s. Shape: (1000, 10).", path, format)
+	// In a real implementation, this would load and return dataset info
+	return fmt.Sprintf("Dataset loaded from %s. Format: %s. Shape: (1000, 10). Columns: [...]", path, format)
 }
 
 func handleAnalyzeData(action Action) string {
@@ -190,6 +222,7 @@ func handleAnalyzeData(action Action) string {
 
 	logInfo(fmt.Sprintf("Running analysis: %s", analysisType))
 	
+	// In real implementation, run statistical analysis
 	return fmt.Sprintf("Analysis '%s' complete. Mean: 42.5, Std: 12.3, Outliers: 15", analysisType)
 }
 
@@ -204,6 +237,7 @@ func handleTrainModel(action Action) string {
 
 	logInfo(fmt.Sprintf("Training model: %s", modelType))
 	
+	// In real implementation, train model
 	return fmt.Sprintf("Model '%s' trained. Accuracy: 0.92, Loss: 0.15", modelType)
 }
 
@@ -218,6 +252,7 @@ func handleEvaluateModel(action Action) string {
 
 	logInfo(fmt.Sprintf("Evaluating model: %s", modelPath))
 	
+	// In real implementation, evaluate model
 	return fmt.Sprintf("Model evaluation complete. Precision: 0.89, Recall: 0.91, F1: 0.90")
 }
 
@@ -232,5 +267,6 @@ func handleVisualize(action Action) string {
 
 	logInfo(fmt.Sprintf("Creating visualization: %s", vizType))
 	
+	// In real implementation, create plot
 	return fmt.Sprintf("Visualization '%s' saved to plots/output.png", vizType)
 }

@@ -42,9 +42,6 @@ func main() {
 	case "ask":
 		handleAsk(args[1:])
 
-	case "code":
-		handleCode(args[1:])
-
 	case "research":
 		handleResearch(args[1:])
 
@@ -69,26 +66,25 @@ func main() {
 
 func showHelp() {
 	printHeader()
-	logInfo("AI agent for software development, ML research & trading")
+	logInfo("AI agent for software + ML research in your terminal")
 	printDivider()
 	fmt.Println()
 
 	fmt.Println("  SOFTWARE DEVELOPMENT")
 	fmt.Println()
 	printCmd("init", "Initialize Keke in this project")
-	printCmd("code", "AI coding assistant - creates/edits files (--fast/--smart/--deep)")
-	printCmd("ask", "AI chat for general questions (--fast/--smart/--deep)")
-	printCmd("rollback", "Restore file from snapshot (rollback <filename>)")
+	printCmd("ask", "AI coding assistant (--fast/--smart/--deep)")
+	printCmd("rollback", "Restore file from snapshot")
 	fmt.Println()
 
 	fmt.Println("  ML RESEARCH")
 	fmt.Println()
-	printCmd("research", "AI research assistant for experiments (--fast/--smart/--deep)")
+	printCmd("research", "AI research assistant for experiments & analysis")
 	fmt.Println()
 
 	fmt.Println("  TRADING")
 	fmt.Println()
-	printCmd("signal", "Forex market analysis (signal <PAIR> --timeframe <1H|4H|1D>)")
+	printCmd("signal", "Forex market analysis & predictions")
 	fmt.Println()
 
 	fmt.Println("  ACCOUNT")
@@ -108,35 +104,9 @@ func showHelp() {
 	fmt.Println()
 
 	printDivider()
-	logInfo("EXAMPLES:")
-	fmt.Println()
-	logInfo("Development:")
-	fmt.Printf("  keke code \"create a REST API with user auth\" --smart --provider groq\n")
-	fmt.Printf("  keke code \"add error handling to server.go\"\n")
-	fmt.Printf("  keke code \"fix the bug in main.go\" --deep\n")
-	fmt.Println()
-	logInfo("General Chat:")
-	fmt.Printf("  keke ask \"explain how JWT tokens work\"  --fast --provider groq\n")
-	fmt.Printf("  keke ask \"what is the difference between REST and GraphQL?\"\n")
-	fmt.Println()
-	logInfo("Research:")
-	fmt.Printf("  keke research \"analyze this dataset for outliers\" --deep --provider groq\n")
-	fmt.Printf("  keke research \"train a CNN model on the images\"\n")
-	fmt.Println()
-	logInfo("Trading:")
-	fmt.Printf("  keke signal EURUSD --timeframe 4H  --smart --provider groq\n")
-	fmt.Printf("  keke signal BTCUSD --timeframe 1H --provider groq\n")
-	fmt.Println()
-	logInfo("File Recovery:")
-	fmt.Printf("  keke rollback\n")
-	fmt.Printf("  keke rollback server.go\n")
-	fmt.Println()
-	
-	printDivider()
-	logInfo("FLAGS:")
-	fmt.Println("  --fast    Fast model (lower quality, uses fewer credits)")
-	fmt.Println("  --smart   Smart model (balanced, default)")
-	fmt.Println("  --deep    Deep model (highest quality, uses more credits)")
+	logInfo("Software:    keke ask \"add login feature\"")
+	logInfo("Research:    keke research \"analyze this dataset\"")
+	logInfo("Trading:     keke signal EURUSD --timeframe 4H")
 	fmt.Println()
 }
 
