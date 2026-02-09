@@ -121,32 +121,52 @@ func handleExecuteCommand(action Action) string {
 	return string(output)
 }
 
+// ✅ CORRECTED: Empty path = list entire project structure
 func handleListFiles(action Action) string {
 	dir := action.Path
+	
+	// ✅ Empty path means list entire project
 	if dir == "" {
 		dir = "."
 	}
 
 	if !checkPermission("read") {
-		if !requestPermission("read", "AI wants to list files in workspace") {
+		if !requestPermission("read", "AI wants to list project structure") {
 			return "Permission denied by user"
 		}
 	}
 
-	var files []string
+	// ✅ List file structure ONLY (no content)
+	var fileTree []string
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(path, ".keke") || strings.Contains(path, ".git") || strings.Contains(path, "node_modules") {
+		
+		// ✅ CRITICAL: Skip .keke folder completely
+		if strings.Contains(path, ".keke") {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !info.IsDir() {
-			files = append(files, path)
+		
+		// Skip other hidden/ignored folders
+		if strings.Contains(path, ".git") || strings.Contains(path, "node_modules") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
+		
+		// Add files and directories to tree
+		if !info.IsDir() {
+			fileTree = append(fileTree, path)
+		} else if path != dir {
+			// Add directories with trailing slash for clarity
+			fileTree = append(fileTree, path+"/")
+		}
+		
 		return nil
 	})
 
@@ -154,8 +174,11 @@ func handleListFiles(action Action) string {
 		return fmt.Sprintf("Error listing files: %v", err)
 	}
 
-	logInfo(fmt.Sprintf("Listed %d files", len(files)))
-	return strings.Join(files, "\n")
+	logInfo(fmt.Sprintf("Listed %d items (excluding .keke)", len(fileTree)))
+	
+	// ✅ Return ONLY the file paths, not content
+	// This is the project structure that AI can use to decide which files to read
+	return strings.Join(fileTree, "\n")
 }
 
 // truncate - helper to truncate long strings

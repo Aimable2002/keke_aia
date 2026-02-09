@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 	"strings"
 )
 
@@ -117,11 +118,14 @@ func callResearchAI(prompt, model, sessionID string, auth *AuthData) (*AIRespons
 	}
 
 	jsonData, _ := json.Marshal(payload)
-	resp, err := makeAuthenticatedRequest(
+	
+	// Use longer timeout for AI requests (2 minutes)
+	resp, err := makeAuthenticatedRequestWithTimeout(
 		"POST",
 		EndpointAI,
 		bytes.NewBuffer(jsonData),
 		auth,
+		120*time.Second,
 	)
 	if err != nil {
 		return nil, err

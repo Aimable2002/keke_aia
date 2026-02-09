@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 func handleAsk(args []string) {
@@ -78,11 +79,14 @@ func callGeneralAI(prompt, model string, auth *AuthData) (*AIResponse, error) {
 	}
 
 	jsonData, _ := json.Marshal(payload)
-	resp, err := makeAuthenticatedRequest(
+	
+	// Use longer timeout for AI requests (2 minutes)
+	resp, err := makeAuthenticatedRequestWithTimeout(
 		"POST",
 		EndpointAI,
 		bytes.NewBuffer(jsonData),
 		auth,
+		120*time.Second,
 	)
 	if err != nil {
 		return nil, err

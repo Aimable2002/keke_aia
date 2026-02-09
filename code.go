@@ -7,15 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
+	// "regexp"
 	"strings"
 	"time"
 )
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SIMPLIFIED: No local session storage
-// Backend manages everything via database
-// ═══════════════════════════════════════════════════════════════════════════
 
 func handleCode(args []string) {
 	if !isLoggedIn() {
@@ -71,7 +66,6 @@ func handleCode(args []string) {
 
 	logInfo(fmt.Sprintf("Model: %s | Provider: %s", model, provider))
 	
-	// Simple conversation loop - backend handles session persistence
 	conversationLoop(promptText, model, provider, auth)
 }
 
@@ -88,22 +82,14 @@ func showCodeHelp() {
 	logInfo("  --smart      Smart model (default)")
 	logInfo("  --deep       Deep model (best quality)")
 	logInfo("  --provider   Choose AI provider (groq|anthropic)")
-	fmt.Println()
-	logInfo("Conversation history is automatically saved on the server")
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// CONVERSATION LOOP
-// ═══════════════════════════════════════════════════════════════════════════
 
 func conversationLoop(initialPrompt, model, provider string, auth *AuthData) {
 	var sessionID string
-	maxIterations := 20
-	iteration := 0
 	totalCredits := 0
 
-	// First message - backend will create/reuse session based on user_id
-	response, err := callDatabaseAI(initialPrompt, model, provider, auth)
+	// First message
+	response, err := callDatabaseAI(initialPrompt, model, provider, "", auth)
 	if err != nil {
 		logError(fmt.Sprintf("AI error: %v", err))
 		return
@@ -112,87 +98,69 @@ func conversationLoop(initialPrompt, model, provider string, auth *AuthData) {
 	sessionID = response.SessionID
 	totalCredits += response.CreditsUsed
 
-	// Handle first response
-	continueLoop := handleAIResponseWithTools(response, model, provider, sessionID, auth, &totalCredits)
+	// Handle response (recursively handles tool calls)
+	handleAIResponseWithTools(response, model, provider, sessionID, auth, &totalCredits)
 	
-	if response.Done || !continueLoop {
-		printDivider()
-		logInfo(fmt.Sprintf("Credits used: %d", totalCredits))
+	printDivider()
+	logInfo(fmt.Sprintf("Credits used: %d", totalCredits))
+}
+
+// ✅ CRITICAL FIX: Stop when AI responds conversationally (no tool calls)
+func handleAIResponseWithTools(
+	response *AIResponse, 
+	model, provider, sessionID string, 
+	auth *AuthData, 
+	totalCredits *int,
+) {
+	// ✅ If no tool calls, AI responded conversationally - show message and STOP
+	if len(response.ToolCalls) == 0 {
+		if response.Message != "" {
+			printDivider()
+			fmt.Println(response.Message)
+		}
+		return // ✅ STOP - don't continue loop
+	}
+
+	// Execute tool calls
+	results := executeToolCalls(response.ToolCalls)
+	
+	// Send results back
+	newResponse, err := sendToolResultsToDatabaseAI(results, model, provider, sessionID, auth)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to send tool results: %v", err))
 		return
 	}
-
-	// Continue conversation if needed
-	for iteration < maxIterations && continueLoop {
-		iteration++
-
-		response, err = callDatabaseAI("continue", model, provider, auth)
-		if err != nil {
-			logError(fmt.Sprintf("AI error: %v", err))
-			return
-		}
-
-		totalCredits += response.CreditsUsed
-
-		continueLoop = handleAIResponseWithTools(response, model, provider, sessionID, auth, &totalCredits)
-
-		if response.Done || !continueLoop {
-			break
-		}
-	}
-
-	printDivider()
-	logInfo(fmt.Sprintf("Total credits: %d", totalCredits))
-
-	if iteration >= maxIterations {
-		logWarning("Max iterations reached. Continue with another 'keke code' command.")
-	}
+	
+	*totalCredits += newResponse.CreditsUsed
+	
+	// Recursively handle the new response
+	handleAIResponseWithTools(newResponse, model, provider, sessionID, auth, totalCredits)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// RESPONSE HANDLER WITH TOOL SUPPORT
-// ═══════════════════════════════════════════════════════════════════════════
-
-func handleAIResponseWithTools(response *AIResponse, model, provider, sessionID string, auth *AuthData, totalCredits *int) bool {
-	// Handle tool calls
-	if len(response.ToolCalls) > 0 {
-		results := executeToolCalls(response.ToolCalls)
-		
-		// Send results back to AI (backend will append to session)
-		newResponse, err := sendToolResultsToDatabaseAI(results, model, provider, auth)
-		if err != nil {
-			logError(fmt.Sprintf("Failed to send tool results: %v", err))
-			return false
-		}
-		
-		*totalCredits += newResponse.CreditsUsed
-		
-		// Recursively handle the AI's response after receiving tool results
-		return handleAIResponseWithTools(newResponse, model, provider, sessionID, auth, totalCredits)
-	}
-
-	// Handle regular response
-	return handleAIResponse(response)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// API CALLS - Database-backed sessions
-// ═══════════════════════════════════════════════════════════════════════════
-
-func callDatabaseAI(promptText, model, provider string, auth *AuthData) (*AIResponse, error) {
+func callDatabaseAI(promptText, model, provider, sessionID string, auth *AuthData) (*AIResponse, error) {
 	payload := map[string]interface{}{
-		"message":  promptText,
 		"model":    model,
 		"provider": provider,
 		"mode":     "code",
-		"user_id":  auth.UserID, // Backend uses this to get/create session
+		"user_id":  auth.UserID,
+	}
+
+	if sessionID != "" {
+		payload["session_id"] = sessionID
+	}
+
+	if promptText != "" {
+		payload["message"] = promptText
 	}
 
 	jsonData, _ := json.Marshal(payload)
-	resp, err := makeAuthenticatedRequest(
+	
+	resp, err := makeAuthenticatedRequestWithTimeout(
 		"POST",
 		EndpointAI,
 		bytes.NewBuffer(jsonData),
 		auth,
+		120*time.Second,
 	)
 	if err != nil {
 		return nil, err
@@ -216,21 +184,24 @@ func callDatabaseAI(promptText, model, provider string, auth *AuthData) (*AIResp
 	return &response, nil
 }
 
-func sendToolResultsToDatabaseAI(results []ToolResult, model, provider string, auth *AuthData) (*AIResponse, error) {
+func sendToolResultsToDatabaseAI(results []ToolResult, model, provider, sessionID string, auth *AuthData) (*AIResponse, error) {
 	payload := map[string]interface{}{
 		"tool_results": results,
 		"model":        model,
 		"provider":     provider,
 		"mode":         "code",
-		"user_id":      auth.UserID, // Backend uses this to find session
+		"user_id":      auth.UserID,
+		"session_id":   sessionID,
 	}
 
 	jsonData, _ := json.Marshal(payload)
-	resp, err := makeAuthenticatedRequest(
+	
+	resp, err := makeAuthenticatedRequestWithTimeout(
 		"POST",
 		EndpointAI,
 		bytes.NewBuffer(jsonData),
 		auth,
+		120*time.Second,
 	)
 	if err != nil {
 		return nil, err
@@ -254,290 +225,7 @@ func sendToolResultsToDatabaseAI(results []ToolResult, model, provider string, a
 	return &response, nil
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// RESPONSE HANDLER
-// ═══════════════════════════════════════════════════════════════════════════
-
-func handleAIResponse(response *AIResponse) bool {
-	message := response.Message
-
-	// AI created a plan
-	if containsPlan(message) {
-		plan := extractPlan(message)
-		if plan != nil {
-			printDivider()
-			logInfo("AI CREATED IMPLEMENTATION PLAN:")
-			fmt.Println()
-			displayPlanCompact(plan)
-			printDivider()
-
-			approval := prompt("Approve plan? (y/n)")
-			approval = strings.ToLower(strings.TrimSpace(approval))
-
-			if approval == "n" || approval == "no" {
-				fmt.Println()
-				logInfo("Plan rejected. Tell AI what to change in your next command.")
-				return false
-			}
-
-			fmt.Println()
-			logSuccess("Plan approved! AI will start implementation...")
-			fmt.Println()
-			return true
-		}
-	}
-
-	// AI created code files
-	filesCreated := extractAndWriteCodeBlocks(message)
-	if len(filesCreated) > 0 {
-		logSuccess("Created/updated:")
-		for _, file := range filesCreated {
-			fmt.Printf("  ✓ %s\n", file)
-		}
-		fmt.Println()
-		return true
-	}
-
-	// AI is asking questions
-	if containsQuestion(message) {
-		printCleanMessage(message)
-		fmt.Println()
-		logInfo("Respond with another 'keke code \"your answer\"' to continue")
-		return false
-	}
-
-	// AI says it's done
-	if isDoneResponse(message) {
-		printCleanMessage(message)
-		logSuccess("Task completed!")
-		return false
-	}
-
-	// Default: Show message
-	printCleanMessage(message)
-	return true
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// DETECTION HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-func containsPlan(message string) bool {
-	lower := strings.ToLower(message)
-	return (strings.Contains(lower, `"steps"`) && strings.Contains(lower, `"project_structure"`)) ||
-		   (strings.Contains(lower, "step 1:") && strings.Contains(lower, "step 2:"))
-}
-
-func containsQuestion(message string) bool {
-	lines := strings.Split(message, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasSuffix(trimmed, "?") {
-			if !strings.HasPrefix(strings.ToLower(trimmed), "what if") &&
-			   !strings.HasPrefix(strings.ToLower(trimmed), "why not") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isDoneResponse(message string) bool {
-	lower := strings.ToLower(message)
-	doneIndicators := []string{
-		"task completed",
-		"implementation complete",
-		"all done",
-		"finished implementing",
-		"successfully created",
-		"project is ready",
-	}
-	
-	for _, indicator := range doneIndicators {
-		if strings.Contains(lower, indicator) {
-			return true
-		}
-	}
-	return false
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PLAN STRUCTURES
-// ═══════════════════════════════════════════════════════════════════════════
-
-type ExecutionPlan struct {
-	ProjectStructure []FolderStructure `json:"project_structure"`
-	Technologies     []string          `json:"technologies"`
-	Steps            []PlanStep        `json:"steps"`
-	EstimatedTime    string            `json:"estimated_time"`
-	Overview         string            `json:"overview"`
-}
-
-type FolderStructure struct {
-	Path        string `json:"path"`
-	Type        string `json:"type"`
-	Description string `json:"description"`
-}
-
-type PlanStep struct {
-	StepNumber  int      `json:"step_number"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Files       []string `json:"files"`
-	Actions     []string `json:"actions"`
-}
-
-func extractPlan(message string) *ExecutionPlan {
-	jsonStr := extractJSON(message)
-	if jsonStr == "" {
-		return nil
-	}
-
-	var plan ExecutionPlan
-	if err := json.Unmarshal([]byte(jsonStr), &plan); err != nil {
-		return nil
-	}
-
-	return &plan
-}
-
-func extractJSON(text string) string {
-	start := strings.Index(text, "{")
-	if start == -1 {
-		return ""
-	}
-
-	depth := 0
-	for i := start; i < len(text); i++ {
-		if text[i] == '{' {
-			depth++
-		} else if text[i] == '}' {
-			depth--
-			if depth == 0 {
-				return text[start : i+1]
-			}
-		}
-	}
-
-	return ""
-}
-
-func displayPlanCompact(plan *ExecutionPlan) {
-	if plan.Overview != "" {
-		fmt.Println(plan.Overview)
-		fmt.Println()
-	}
-
-	if len(plan.Technologies) > 0 {
-		logInfo("Technologies: " + strings.Join(plan.Technologies, ", "))
-		fmt.Println()
-	}
-
-	if len(plan.Steps) > 0 {
-		logInfo(fmt.Sprintf("IMPLEMENTATION PLAN (%d steps):", len(plan.Steps)))
-		for _, step := range plan.Steps {
-			fmt.Printf("\n  Step %d: %s\n", step.StepNumber, step.Title)
-			if step.Description != "" {
-				fmt.Printf("  %s\n", step.Description)
-			}
-			if len(step.Files) > 0 {
-				fmt.Printf("  Files: %s\n", strings.Join(step.Files, ", "))
-			}
-		}
-		fmt.Println()
-	}
-
-	if plan.EstimatedTime != "" {
-		logInfo("Estimated time: " + plan.EstimatedTime)
-		fmt.Println()
-	}
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// CODE EXTRACTION
-// ═══════════════════════════════════════════════════════════════════════════
-
-func extractAndWriteCodeBlocks(message string) []string {
-	var filesCreated []string
-
-	pattern := regexp.MustCompile("```([a-z]*) ([^\\n]+)\\n([\\s\\S]*?)```")
-	matches := pattern.FindAllStringSubmatch(message, -1)
-
-	for _, match := range matches {
-		if len(match) < 4 {
-			continue
-		}
-
-		filepath := strings.TrimSpace(match[2])
-		content := match[3]
-
-		if filepath != "" && content != "" {
-			if writeFile(filepath, content) {
-				filesCreated = append(filesCreated, filepath)
-			}
-		}
-	}
-
-	return filesCreated
-}
-
-func writeFile(filename, content string) bool {
-	if filename == "" {
-		return false
-	}
-
-	if !checkPermission("write") {
-		if !requestPermission("write", fmt.Sprintf("Create/update: %s", filename)) {
-			return false
-		}
-	}
-
-	createSnapshot(filename)
-
-	dir := filepath.Dir(filename)
-	if dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			logError(fmt.Sprintf("Failed to create directory %s: %v", dir, err))
-			return false
-		}
-	}
-
-	if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
-		logError(fmt.Sprintf("Failed to write %s: %v", filename, err))
-		return false
-	}
-
-	return true
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// MESSAGE DISPLAY
-// ═══════════════════════════════════════════════════════════════════════════
-
-func printCleanMessage(message string) {
-	codeBlockPattern := regexp.MustCompile("(?s)```[^`]*```")
-	cleaned := codeBlockPattern.ReplaceAllString(message, "[code]")
-
-	cleaned = strings.ReplaceAll(cleaned, `{"`, "[plan]")
-
-	lines := strings.Split(cleaned, "\n")
-	var nonEmpty []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && trimmed != "[code]" && trimmed != "[plan]" {
-			nonEmpty = append(nonEmpty, line)
-		}
-	}
-
-	if len(nonEmpty) > 0 {
-		fmt.Println(strings.Join(nonEmpty, "\n"))
-	}
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PERMISSION HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-
+// Permission helpers
 func checkPermission(permType string) bool {
 	perms, err := readPermissions()
 	if err != nil {
@@ -596,9 +284,7 @@ func writePermissions(perms *Permissions) error {
 }
 
 func createSnapshot(filePath string) error {
-	// Check if file exists before trying to snapshot
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		// File doesn't exist yet, skip snapshot (not an error for new files)
 		return nil
 	}
 	

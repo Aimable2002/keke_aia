@@ -560,6 +560,10 @@ func getMacHardwareUUID() (string, error) {
 // ─── HTTP HELPERS ────────────────────────────────────────────────────────────
 
 func makeAuthenticatedRequest(method, url string, body io.Reader, auth *AuthData) (*http.Response, error) {
+	return makeAuthenticatedRequestWithTimeout(method, url, body, auth, 120*time.Second)
+}
+
+func makeAuthenticatedRequestWithTimeout(method, url string, body io.Reader, auth *AuthData, timeout time.Duration) (*http.Response, error) {
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
@@ -569,7 +573,7 @@ func makeAuthenticatedRequest(method, url string, body io.Reader, auth *AuthData
 	req.Header.Set("X-PC-Hash", auth.PCHash)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: timeout}
 	return client.Do(req)
 }
 

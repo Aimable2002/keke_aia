@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	// "strings"
+	"strings"
 )
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -98,7 +98,11 @@ func displayToolRequest(toolCall ToolCall) {
 		
 	case "list_files":
 		path := parseListFilesArgs(toolCall.Function.Arguments)
-		logInfo(fmt.Sprintf("📁 List: %s", path))
+		if path == "" || path == "." {
+			logInfo("📁 List: entire project structure")
+		} else {
+			logInfo(fmt.Sprintf("📁 List: %s", path))
+		}
 		
 	default:
 		logInfo(fmt.Sprintf("🔧 Tool: %s", funcName))
@@ -123,7 +127,11 @@ func formatToolPermissionMessage(toolCall ToolCall) string {
 		return fmt.Sprintf("Read file: %s", path)
 		
 	case "list_files":
-		return "List files in workspace"
+		path := parseListFilesArgs(toolCall.Function.Arguments)
+		if path == "" || path == "." {
+			return "List entire project structure"
+		}
+		return fmt.Sprintf("List files in: %s", path)
 		
 	default:
 		return fmt.Sprintf("Use tool: %s", funcName)
@@ -197,10 +205,6 @@ func parseCommandArgs(argsJSON json.RawMessage) string {
 }
 
 func parseWriteFileArgs(argsJSON json.RawMessage) (string, string) {
-	// Groq/OpenAI return arguments as a JSON string, not an object
-	// So we might have: "{"path":"...","content":"..."}" (note the quotes)
-	// We need to unmarshal twice: once to get the string, once to parse the JSON
-	
 	var args struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -212,7 +216,7 @@ func parseWriteFileArgs(argsJSON json.RawMessage) (string, string) {
 		return args.Path, args.Content
 	}
 	
-	// Try unmar shaling as string first (Groq/OpenAI format)
+	// Try unmarshaling as string first (Groq/OpenAI format)
 	var argsString string
 	if err := json.Unmarshal(argsJSON, &argsString); err == nil {
 		// Now unmarshal the string as JSON
@@ -242,21 +246,23 @@ func parseReadFileArgs(argsJSON json.RawMessage) string {
 			return args.Path
 		}
 		// Return the string itself if not empty
-		if argsString != "" {
+		if strings.TrimSpace(argsString) != "" {
 			return argsString
 		}
 	}
 	
-	return "."
+	return ""
 }
 
+// ✅ CORRECTED: Empty path is valid - it means "list entire project"
 func parseListFilesArgs(argsJSON json.RawMessage) string {
 	var args struct {
 		Path string `json:"path"`
 	}
 	
 	// Try direct unmarshal first
-	if err := json.Unmarshal(argsJSON, &args); err == nil && args.Path != "" {
+	if err := json.Unmarshal(argsJSON, &args); err == nil {
+		// ✅ Empty path is VALID - return it as-is
 		return args.Path
 	}
 	
@@ -264,16 +270,16 @@ func parseListFilesArgs(argsJSON json.RawMessage) string {
 	var argsString string
 	if err := json.Unmarshal(argsJSON, &argsString); err == nil {
 		// Try to parse as JSON
-		if err := json.Unmarshal([]byte(argsString), &args); err == nil && args.Path != "" {
+		if err := json.Unmarshal([]byte(argsString), &args); err == nil {
+			// ✅ Return path even if empty
 			return args.Path
 		}
-		// Return the string itself if not empty
-		if argsString != "" {
-			return argsString
-		}
+		// ✅ Return the string as-is (even if empty)
+		return argsString
 	}
 	
-	return "."
+	// ✅ If all parsing fails, return empty string (will be treated as "list entire project")
+	return ""
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -331,10 +337,13 @@ func readFileTool(argsJSON json.RawMessage) (string, error) {
 
 func listFilesTool(argsJSON json.RawMessage) (string, error) {
 	path := parseListFilesArgs(argsJSON)
+	
+	// ✅ Empty path is VALID - means "list entire project"
+	// No validation needed here
 
 	action := Action{
 		Type: "list_files",
-		Path: path,
+		Path: path, // Can be empty, that's OK
 	}
 	
 	output := handleListFiles(action)
@@ -356,6 +365,7 @@ func sendToolResultsToAI(results []ToolResult, model, provider, sessionID string
 		"model":        model,
 		"provider":     provider,
 		"session_id":   sessionID,
+		"user_id":      auth.UserID,
 	}
 
 	jsonData, err := json.Marshal(payload)
